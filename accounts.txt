@@ -1,4 +1,2 @@
-# Masukkan token Bearer kamu di sini, satu per baris
-# Hapus baris komentar ini sebelum digunakan
-# Contoh:
-# eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+YourPrivateKey1Here
+YourPrivateKey2Here
