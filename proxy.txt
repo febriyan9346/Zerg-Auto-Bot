@@ -1,0 +1,7 @@
+# Masukkan proxy kamu di sini, satu per baris (opsional)
+# Hapus baris komentar ini sebelum digunakan
+# Format yang didukung:
+# http://ip:port
+# http://user:password@ip:port
+# Contoh:
+# http://123.456.789.0:8080
