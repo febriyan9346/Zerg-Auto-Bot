@@ -19,25 +19,22 @@ if not sys.warnoptions:
 
 init(autoreset=True)
 
+
 class ZergBot:
     def __init__(self):
         self.accounts_file = "accounts.txt"
         self.proxy_file = "proxy.txt"
-        self.headers_base = {
+        self.api_base = "https://api-prod.zerg.app/api/v1"
+        self.headers = {
             "accept": "application/json",
-            "accept-encoding": "gzip, deflate, br, zstd",
-            "accept-language": "en-US,en;q=0.9",
             "content-type": "application/json",
             "origin": "https://zerg.app",
             "referer": "https://zerg.app/",
-            "sec-ch-ua": '"Chromium";v="148", "Google Chrome";v="148", "Not/A)Brand";v="99"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-site",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-            "x-frontend-key": "Zerg-Frontend/1.0"
+            "user-agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/148.0.0.0 Safari/537.36"
+            ),
         }
 
     def get_wib_time(self):
@@ -54,6 +51,7 @@ class ZergBot:
 
     def log(self, message, level="INFO"):
         time_str = self.get_wib_time()
+
         if level == "INFO":
             color = Fore.CYAN
             symbol = "[INFO]"
@@ -72,10 +70,12 @@ class ZergBot:
         else:
             color = Fore.WHITE
             symbol = "[LOG]"
+
         print(f"[{time_str}] {color}{symbol} {message}{Style.RESET_ALL}")
 
     def random_delay(self):
-        delay = random.uniform(1.5, 3.5)
+        delay = random.randint(1, 3)
+        self.log(f"Delay {delay} seconds...", "INFO")
         time.sleep(delay)
 
     def show_menu(self):
@@ -84,6 +84,7 @@ class ZergBot:
         print(f"{Fore.GREEN}1. Run with proxy")
         print(f"2. Run without proxy{Style.RESET_ALL}")
         print(f"{Fore.CYAN}============================================================{Style.RESET_ALL}")
+
         while True:
             try:
                 choice = input(f"{Fore.GREEN}Enter your choice (1/2): {Style.RESET_ALL}").strip()
@@ -94,15 +95,6 @@ class ZergBot:
             except KeyboardInterrupt:
                 print(f"\n{Fore.RED}Program terminated by user.{Style.RESET_ALL}")
                 exit(0)
-
-    def countdown(self, seconds):
-        for i in range(seconds, 0, -1):
-            hours = i // 3600
-            minutes = (i % 3600) // 60
-            secs = i % 60
-            print(f"\r[COUNTDOWN] Next cycle in: {hours:02d}:{minutes:02d}:{secs:02d} ", end="", flush=True)
-            time.sleep(1)
-        print("\r" + " " * 60 + "\r", end="", flush=True)
 
     def load_lines(self, filename):
         try:
@@ -129,12 +121,14 @@ class ZergBot:
         signature = base58.b58encode(signed.signature).decode('utf-8')
         return signature
 
-    def set_auth_cookie(self, session, res_verify):
-        set_cookie = res_verify.headers.get('set-cookie', '')
-        if 'auth_token=' in set_cookie:
-            self.log("Token set via Set-Cookie header", "INFO")
-        else:
-            self.log(f"No auth token found! Set-Cookie: {set_cookie[:120] if set_cookie else 'none'}", "WARNING")
+    def countdown(self, seconds):
+        for i in range(seconds, 0, -1):
+            hours = i // 3600
+            minutes = (i % 3600) // 60
+            secs = i % 60
+            print(f"\r[COUNTDOWN] Next cycle in: {hours:02d}:{minutes:02d}:{secs:02d} ", end="", flush=True)
+            time.sleep(1)
+        print("\r" + " " * 60 + "\r", end="", flush=True)
 
     def process_account(self, private_key_b58, proxy_url):
         signing_key, wallet_address = self.load_solana_wallet(private_key_b58)
@@ -142,21 +136,23 @@ class ZergBot:
             return False
 
         wallet_short = f"{wallet_address[:8]}...{wallet_address[-8:]}"
-        self.log(f"Wallet: {wallet_short}", "INFO")
 
         if proxy_url:
             self.log(f"Proxy: {proxy_url}", "INFO")
         else:
             self.log("Proxy: No Proxy", "INFO")
 
+        self.log(f"{wallet_short}", "INFO")
+
         session = requests.Session()
         if proxy_url:
             session.proxies = {"http": proxy_url, "https": proxy_url}
 
         try:
+            # Step 1: Get nonce
             self.log("Requesting nonce...", "INFO")
-            url_nonce = "https://api-prod.zerg.app/api/v1/session/init"
-            res_nonce = session.post(url_nonce, headers=self.headers_base, json={"walletAddress": wallet_address}, timeout=10)
+            url_nonce = f"{self.api_base}/handshake/start"
+            res_nonce = session.post(url_nonce, headers=self.headers, json={"walletAddress": wallet_address}, timeout=10)
 
             if not res_nonce.ok or not res_nonce.json().get('success'):
                 self.log(f"Failed to get nonce: {res_nonce.text}", "ERROR")
@@ -165,10 +161,11 @@ class ZergBot:
             nonce_data = res_nonce.json()['data']
             nonce, message_to_sign = nonce_data['nonce'], nonce_data['message']
 
+            # Step 2: Sign & confirm
             self.log("Sending signature...", "INFO")
             signature = self.sign_message(signing_key, message_to_sign)
-            url_verify = "https://api-prod.zerg.app/api/v1/session/establish"
-            headers_verify = self.headers_base.copy()
+            url_verify = f"{self.api_base}/handshake/confirm"
+            headers_verify = self.headers.copy()
             headers_verify["x-idempotency-key"] = str(uuid.uuid4())
 
             payload_verify = {
@@ -183,67 +180,59 @@ class ZergBot:
                 self.log(f"Login failed: {res_verify.text}", "ERROR")
                 return False
 
-            self.set_auth_cookie(session, res_verify)
+            set_cookie = res_verify.headers.get('set-cookie', '')
+            if 'auth_token=' in set_cookie:
+                self.log("Token set via Set-Cookie header", "INFO")
 
             time_str = self.get_wib_time()
             print(f"[{time_str}] {Fore.GREEN}[SUCCESS] Login successful!{Style.RESET_ALL}")
             self.random_delay()
 
-            url_me = "https://api-prod.zerg.app/api/v1/users/me"
-            res_me = session.get(url_me, headers=self.headers_base, timeout=10)
-            if res_me.ok and res_me.json().get('success'):
-                data = res_me.json()['data']
-                self.log(f"Nickname: {data.get('nickname')} | Streak: {data.get('dailyStreakCount')} | Played Today: {data.get('playedToday')}", "INFO")
+            # Step 3: Check inventory
+            self.log("Checking inventory...", "INFO")
+            url_inventory = f"{self.api_base}/dispenser/inventory"
+            res_inv = session.get(url_inventory, headers=self.headers, timeout=10)
+            if res_inv.ok and res_inv.json().get('success'):
+                inv = res_inv.json()['data']
+                plays_left = inv.get('playsRemaining', 0)
+                plays_limit = inv.get('dailyLimit', 0)
+                self.log(f"Plays Remaining: {plays_left}/{plays_limit}", "INFO")
             else:
-                self.log(f"users/me failed: {res_me.status_code} | {res_me.text[:150]}", "WARNING")
-            self.random_delay()
+                self.log(f"Failed to check inventory: {res_inv.status_code}", "WARNING")
+                return False
 
-            self.log("Checking Widget state...", "INFO")
-            url_widget_state = "https://api-prod.zerg.app/api/v1/widget/state"
-            res_state = session.get(url_widget_state, headers=self.headers_base, timeout=10)
+            # Step 4: Spin
+            self.log("Processing Spins...", "INFO")
+            url_dispense = f"{self.api_base}/dispenser/pull"
+            spin_count = 0
+            total_xp = 0
+            max_spins = 50
 
-            if res_state.ok and res_state.json().get('success'):
-                state_data = res_state.json()['data']
-                plays_remaining = state_data.get('playsRemaining', 0)
-                daily_limit = state_data.get('dailyLimit', 0)
-                plays_today = state_data.get('playsToday', 0)
-                self.log(f"Tickets Remaining: {plays_remaining} | Played Today: {plays_today}/{daily_limit}", "INFO")
+            while spin_count < max_spins:
+                headers_dispense = self.headers.copy()
+                headers_dispense["x-idempotency-key"] = str(uuid.uuid4())
 
-                url_widget_dispense = "https://api-prod.zerg.app/api/v1/widget/dispense"
-                while plays_remaining > 0:
-                    headers_dispense = self.headers_base.copy()
-                    headers_dispense["x-idempotency-key"] = str(uuid.uuid4())
-                    del headers_dispense["content-type"]
+                res_dispense = session.post(url_dispense, headers=headers_dispense, json={}, timeout=10)
 
-                    res_dispense = session.post(url_widget_dispense, headers=headers_dispense, data="", timeout=10)
+                if res_dispense.ok and res_dispense.json().get('success'):
+                    play_data = res_dispense.json()['data']
+                    time_str = self.get_wib_time()
+                    rarity = play_data.get('rarity')
+                    xp_gained = play_data.get('xpAmount', 0)
+                    total_xp += xp_gained
+                    spin_count += 1
+                    print(f"[{time_str}] {Fore.GREEN}[SPIN #{spin_count}] {rarity} | +{xp_gained} XP{Style.RESET_ALL}")
+                    time.sleep(1.5)
+                else:
+                    break
 
-                    if res_dispense.ok and res_dispense.json().get('success'):
-                        play_data = res_dispense.json()['data']
-                        time_str = self.get_wib_time()
-                        rarity = play_data.get('rarity')
-                        xp_gained = play_data.get('xpAmount')
-                        print(f"[{time_str}] {Fore.GREEN}[SUCCESS] Spin: {rarity} | Reward: +{xp_gained} XP{Style.RESET_ALL}")
-                        plays_remaining -= 1
-                        time.sleep(1.5)
-                    else:
-                        self.log(f"Failed to dispense: {res_dispense.status_code} | {res_dispense.text[:150]}", "ERROR")
-                        break
-            else:
-                self.log(f"Widget state failed: {res_state.status_code} | {res_state.text[:150]}", "WARNING")
-
-            self.random_delay()
-
-            url_xp = "https://api-prod.zerg.app/api/v1/users/me/xp"
-            res_xp = session.get(url_xp, headers=self.headers_base, timeout=10)
-            if res_xp.ok and res_xp.json().get('success'):
-                xp_data = res_xp.json()['data']
-                total_xp = xp_data.get('totalXpEarned', 0)
-                rank = xp_data.get('rank', 'N/A')
-                play_xp = xp_data.get('playXp', 0)
+            if spin_count > 0:
                 time_str = self.get_wib_time()
-                print(f"[{time_str}] {Fore.GREEN}[SUCCESS] Total XP: {total_xp} | Play XP: {play_xp} | Rank: {rank}{Style.RESET_ALL}")
+                print(f"[{time_str}] {Fore.GREEN}[SUCCESS] Total Spins: {spin_count} | XP Earned: +{total_xp}{Style.RESET_ALL}")
             else:
-                self.log(f"XP fetch failed: {res_xp.status_code} | {res_xp.text[:150]}", "WARNING")
+                self.log("No spins available", "WARNING")
+
+            self.random_delay()
 
             return True
 
@@ -253,20 +242,26 @@ class ZergBot:
 
     def run(self):
         self.print_banner()
+
         choice = self.show_menu()
 
         use_proxy = choice == '1'
-        mode_text = "Running with proxy" if use_proxy else "Running without proxy"
-        self.log(mode_text, "INFO")
+        proxies = self.load_lines(self.proxy_file) if use_proxy else []
+
+        if use_proxy:
+            if not proxies:
+                self.log("Proxy mode selected but proxy.txt is empty.", "WARNING")
+                self.log("Falling back to no proxy", "WARNING")
+                use_proxy = False
+            else:
+                self.log("Running with proxy", "INFO")
+        else:
+            self.log("Running without proxy", "INFO")
 
         private_keys = self.load_lines(self.accounts_file)
         if not private_keys:
             self.log("No accounts found. Please add private keys.", "ERROR")
             return
-
-        proxies = self.load_lines(self.proxy_file) if use_proxy else []
-        if use_proxy and not proxies:
-            self.log("Proxy mode selected but proxy.txt is empty.", "WARNING")
 
         self.log(f"Loaded {len(private_keys)} accounts successfully", "INFO")
         print(f"\n{Fore.CYAN}============================================================{Style.RESET_ALL}\n")
@@ -282,7 +277,7 @@ class ZergBot:
             for i, pk in enumerate(private_keys):
                 self.log(f"Account #{i+1}/{total_accounts}", "INFO")
 
-                proxy_to_use = proxies[i % len(proxies)] if proxies else None
+                proxy_to_use = proxies[i % len(proxies)] if proxies and use_proxy else None
 
                 if self.process_account(pk, proxy_to_use):
                     success_count += 1
@@ -297,6 +292,7 @@ class ZergBot:
 
             cycle += 1
             self.countdown(86400)
+
 
 if __name__ == "__main__":
     bot = ZergBot()
